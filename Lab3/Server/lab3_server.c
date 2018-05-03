@@ -23,15 +23,11 @@ typedef struct {
  * main
  ********************/
 int main(int argc, char *argv[]) {
-	int sock, n;
-	char buffer[1024];
-    char file_name[1024];
-    PACKET receive_pack;
-    PACKET ack_pack;
-	struct sockaddr_in serverAddr, clientAddr;
+	int sock;
+    PACKET receive_pack, ack_pack;
+	struct sockaddr_in serverAddr;
 	struct sockaddr_storage serverStorage;
-	socklen_t addr_size, client_addr_size;
-	int i;
+	socklen_t addr_size;
 
     if(argc != 2) {
         printf("need the port number\n");
@@ -66,16 +62,18 @@ int main(int argc, char *argv[]) {
 
 	while (1) {
 		// receive  datagrams
-	    n = recvfrom(sock, &receive_pack, sizeof(PACKET), 0, (struct sockaddr *)&serverStorage, &addr_size);
+	    recvfrom(sock, &receive_pack, sizeof(PACKET), 0, (struct sockaddr *)&serverStorage, &addr_size);
 
-		// write file
-        printf("writing: %s\n", receive_pack.data);
-		fwrite(receive_pack.data, sizeof(char), n, dest);
+		// ack
         ack_pack.header.sequence_ack = receive_pack.header.sequence_ack;
         sendto(sock, &ack_pack, sizeof(PACKET), 0, (struct sockaddr *)&serverStorage, addr_size);
 
+        // if close pack, break
         if (receive_pack.header.length == 0)
             break;
+
+        // if data, write to file
+        fwrite(receive_pack.data, sizeof(char), receive_pack.header.length, dest);
 	}
 
     close(sock);

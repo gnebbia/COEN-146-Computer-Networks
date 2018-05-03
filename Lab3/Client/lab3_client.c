@@ -22,10 +22,8 @@ typedef struct {
  *  main
  ***********/
 int main (int argc, char *argv[]) {
-	int sock;
-	char buffer[1024];
-    PACKET send_pack;
-    PACKET ack_pack;
+	int sock, n;
+    PACKET send_pack, ack_pack;
 	struct sockaddr_in serverAddr;
 	socklen_t addr_size;
 
@@ -48,11 +46,11 @@ int main (int argc, char *argv[]) {
     // make packet to send filename
     strcpy(send_pack.data, argv[4]);
     send_pack.header.sequence_ack = 0;
+    send_pack.header.length = sizeof(send_pack.data);
 
     do {  // send filename to server, repeat if wrong ack
 
 		// send filename
-		printf ("Sending: %s\n", send_pack.data);
 		sendto (sock, &send_pack,  sizeof(PACKET), 0, (struct sockaddr *)&serverAddr, addr_size);
 
         //  receive ack
@@ -64,33 +62,22 @@ int main (int argc, char *argv[]) {
     // open file to read
     FILE *src = fopen(argv[3], "rb");
 
-    // step sequence
-    send_pack.header.sequence_ack = (send_pack.header.sequence_ack + 1) % 2;
-
-    // read in data
-    fread(send_pack.data, sizeof(char), 10, src);
-
-    // set size
-    send_pack.header.length = sizeof(char) * 10;
-
 	do {
-        printf("seinding: %s\n", send_pack.data);
+        if (ack_pack.header.sequence_ack == send_pack.header.sequence_ack) {// if ack, set up new pack
+            n = fread(send_pack.data, sizeof(char), 10, src);
+            send_pack.header.length = n;
+            send_pack.header.sequence_ack = (send_pack.header.sequence_ack + 1) % 2;
+        }
         sendto (sock, &send_pack,  sizeof(PACKET), 0, (struct sockaddr *)&serverAddr, addr_size);
 
         recvfrom (sock, &ack_pack, sizeof(PACKET), 0, NULL, NULL);
-        if (ack_pack.header.sequence_ack == send_pack.header.sequence_ack) {// if ack, send next
-            fread(send_pack.data, sizeof(char), 10, src);
-            send_pack.header.sequence_ack = (send_pack.header.sequence_ack + 1) % 2;
-        }
     } while(!feof(src));
 
     // set packet for close
-    strcpy(send_pack.data, "");
     send_pack.header.length = 0;
     send_pack.header.sequence_ack = (send_pack.header.sequence_ack + 1) % 2;
 
     do {  // send close packet to server, repeat if wrong ack
-        printf("seinding: %s\n", send_pack.data);
 		sendto (sock, &send_pack,  sizeof(PACKET), 0, (struct sockaddr *)&serverAddr, addr_size);
 
         //  receive ack
