@@ -1,16 +1,29 @@
 /*Anthony Fenzl
     Friday 2:15p Lab
-    Lab 3
+    Lab 4
 */
+
+// add
+// - calc checksum
+// - start a timer
 
 #include <stdio.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <string.h>
+#include <errno.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/select.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <netinet/in.h>
 
 typedef struct {
-    int sequence_ack;  // 4B
-    int length;  // 4B
+    int sequence_ack;  // sequence number for data and for ACK
+    int length;  // length of the data in bytes (zero for ACK)
+    int check;  // checksum calculated by byte
+    int fin;  // 1 for the last packet
 } HEADER;
 
 typedef struct {
@@ -18,11 +31,24 @@ typedef struct {
     char data[10];
 } PACKET;
 
+int checksum (PACKET* pack) {
+    (*pack).header.check = 0;
+    char* head = (char*)pack;
+    char sum = 0;
+
+    for (int i = 0; i < sizeof (PACKET); i++) {
+        sum = sum ^ (*head);
+        ++head;
+    }
+
+    return (int)sum;
+}
+
 /***********
  *  main
  ***********/
 int main (int argc, char *argv[]) {
-	int sock, n;
+	int sock, check, state;
     PACKET send_pack, ack_pack;
 	struct sockaddr_in serverAddr;
 	socklen_t addr_size;
@@ -43,46 +69,84 @@ int main (int argc, char *argv[]) {
 	/*Create UDP socket*/
 	sock = socket (PF_INET, SOCK_DGRAM, 0);
 
+    /*Setup select for timeouts*/
+    struct timeval tv;  // timer
+    int rv;  // select returned value
+    fd_set readfds;
+    fcntl (sock, F_SETFL, O_NONBLOCK);
+
+    // init state
+    state = 0;
+
     // make packet to send filename
     strcpy(send_pack.data, argv[4]);
-    send_pack.header.sequence_ack = 0;
+    send_pack.header.sequence_ack = state;
     send_pack.header.length = sizeof(send_pack.data);
+    send_pack.header.fin = 0;
+    send_pack.header.check = checksum(&send_pack);
 
     do {  // send filename to server, repeat if wrong ack
 
 		// send filename
+        printf("sent check = %i\n", send_pack.header.check);
 		sendto (sock, &send_pack,  sizeof(PACKET), 0, (struct sockaddr *)&serverAddr, addr_size);
 
+        // start timer
+        FD_ZERO (&readfds);
+        FD_SET (sock, &readfds);
+        tv.tv_sec = 2;
+        tv.tv_usec = 0;
+        rv = select (sock + 1, &readfds, NULL, NULL, &tv);
+        perror("past timere start");
         //  receive ack
-        recvfrom (sock, &ack_pack, sizeof(PACKET), 0, NULL, NULL);
-        if (ack_pack.header.sequence_ack == send_pack.header.sequence_ack)  // if ack, break
-            break;
+        if (rv) {
+            recvfrom (sock, &ack_pack, sizeof(PACKET), 0, NULL, NULL);
+            printf("ack seq = %i\n", ack_pack.header.sequence_ack);
+            printf("state = %i\n", state);
+            if (ack_pack.header.sequence_ack == state){  // if ack, break
+                state = (state + 1) % 2;
+                break;
+            }
+        }
     } while (1);
 
     // open file to read
     FILE *src = fopen(argv[3], "rb");
 
 	do {
-        if (ack_pack.header.sequence_ack == send_pack.header.sequence_ack) {// if ack, set up new pack
-            n = fread(send_pack.data, sizeof(char), 10, src);
-            send_pack.header.length = n;
-            send_pack.header.sequence_ack = (send_pack.header.sequence_ack + 1) % 2;
+        send_pack.header.length = fread(send_pack.data, sizeof(char), 10, src);
+        send_pack.header.sequence_ack = state;
+        send_pack.header.check = checksum(&send_pack);
+        /*printf("ack sequence = %i\n", ack_pack.header.sequence_ack);
+        printf("data sequence = %i\n", send_pack.header.sequence_ack);
+        printf("Seinding: %s\n", send_pack.data); */
+        while (1) {  // if ack, set up new pack
+            sendto (sock, &send_pack,  sizeof(PACKET), 0, (struct sockaddr *)&serverAddr, addr_size);
+            recvfrom (sock, &ack_pack, sizeof(PACKET), 0, NULL, NULL);
+            if (ack_pack.header.sequence_ack == state)
+                break;
         }
-        sendto (sock, &send_pack,  sizeof(PACKET), 0, (struct sockaddr *)&serverAddr, addr_size);
+        // printf("Acked, next pack\n");
+        state = (state + 1) % 2;
 
-        recvfrom (sock, &ack_pack, sizeof(PACKET), 0, NULL, NULL);
+        // printf("compare data sequence = %i\n", send_pack.header.sequence_ack);
+        // printf("new ack sequence = %i\n", ack_pack.header.sequence_ack);
     } while(!feof(src));
 
     // set packet for close
     send_pack.header.length = 0;
     send_pack.header.sequence_ack = (send_pack.header.sequence_ack + 1) % 2;
+    send_pack.header.fin = 1;
+    send_pack.header.check = checksum(&send_pack);
 
     do {  // send close packet to server, repeat if wrong ack
 		sendto (sock, &send_pack,  sizeof(PACKET), 0, (struct sockaddr *)&serverAddr, addr_size);
 
+        // add timer
+
         //  receive ack
         recvfrom (sock, &ack_pack, sizeof(PACKET), 0, NULL, NULL);
-        if (ack_pack.header.sequence_ack == send_pack.header.sequence_ack)  // if ack, break
+        if (ack_pack.header.sequence_ack == state)  // if ack, break
             break;
     } while (1);
 

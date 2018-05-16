@@ -1,6 +1,6 @@
 /*Anthony Fenzl
     Friday 2:15p Lab
-    Lab 3
+    Lab 4
 */
 
 #include <stdio.h>
@@ -10,8 +10,10 @@
 #include <stdlib.h>
 
 typedef struct {
-    int sequence_ack;  // 4B
-    int length;  // 4B
+    int sequence_ack;  // sequence number for data and for ACK
+    int length;  // length of the data in bytes (zero for ACK)
+    int check;  // checksum calculated by byte
+    int fin;  // 1 for the last packet
 } HEADER;
 
 typedef struct {
@@ -19,11 +21,25 @@ typedef struct {
     char data[10];
 } PACKET;
 
+int checksum (PACKET* pack) {
+    (*pack).header.check = 0;
+    char* head = (char*)pack;
+    char sum = 0;
+
+    for (int i = 0; i < sizeof (PACKET); i++) {
+        sum = sum ^ (*head);
+        ++head;
+    }
+
+    return (int)sum;
+}
+
 /********************
  * main
  ********************/
 int main(int argc, char *argv[]) {
-	int sock;
+	int sock, check, state;
+    FILE *dest;
     PACKET receive_pack, ack_pack;
 	struct sockaddr_in serverAddr;
 	struct sockaddr_storage serverStorage;
@@ -41,6 +57,9 @@ int main(int argc, char *argv[]) {
 	memset((char *)serverAddr.sin_zero, '\0', sizeof (serverAddr.sin_zero));
 	addr_size = sizeof (serverStorage);
 
+    // init state
+    state = 0;
+
 	// create socket
 	if ((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
 		printf ("socket error\n");
@@ -54,26 +73,43 @@ int main(int argc, char *argv[]) {
 	}
 
     // Accept and open file
-    recvfrom(sock, &receive_pack, sizeof(PACKET), 0, (struct sockaddr *)&serverStorage, &addr_size);
-    FILE *dest = fopen(receive_pack.data, "wb");
-    ack_pack.header.sequence_ack = receive_pack.header.sequence_ack;
-    sendto(sock, &ack_pack, sizeof(PACKET), 0, (struct sockaddr *)&serverStorage, addr_size);
+    do {
+        recvfrom(sock, &receive_pack, sizeof(PACKET), 0, (struct sockaddr *)&serverStorage, &addr_size);
+        check = receive_pack.header.check;
+        if (check == checksum(&receive_pack) && receive_pack.header.sequence_ack == state) {
+            dest = fopen(receive_pack.data, "wb");
+            ack_pack.header.sequence_ack = state;
+            sendto(sock, &ack_pack, sizeof(PACKET), 0, (struct sockaddr *)&serverStorage, addr_size);
+            state = (state + 1 ) % 2;
+            break;
+        } else {
+            ack_pack.header.sequence_ack = (state + 1) % 2;
+            sendto(sock, &ack_pack, sizeof(PACKET), 0, (struct sockaddr *)&serverStorage, addr_size);
+        }
+    } while(1);
 
 
 	while (1) {
 		// receive  datagrams
 	    recvfrom(sock, &receive_pack, sizeof(PACKET), 0, (struct sockaddr *)&serverStorage, &addr_size);
 
-		// ack
-        ack_pack.header.sequence_ack = receive_pack.header.sequence_ack;
-        sendto(sock, &ack_pack, sizeof(PACKET), 0, (struct sockaddr *)&serverStorage, addr_size);
-
         // if close pack, break
-        if (receive_pack.header.length == 0)
+        if (receive_pack.header.fin == 1)
             break;
 
-        // if data, write to file
-        fwrite(receive_pack.data, sizeof(char), receive_pack.header.length, dest);
+		// ack
+        check = receive_pack.header.check;
+
+        if (check == checksum(&receive_pack) &&
+            receive_pack.header.sequence_ack == state) {
+            ack_pack.header.sequence_ack = state;
+            sendto(sock, &ack_pack, sizeof(PACKET), 0, (struct sockaddr *)&serverStorage, addr_size);
+            state = (state + 1) % 2;
+            fwrite(receive_pack.data, sizeof(char), receive_pack.header.length, dest);
+        } else {
+            ack_pack.header.sequence_ack = (receive_pack.header.sequence_ack + 1) % 2;
+            sendto(sock, &ack_pack, sizeof(PACKET), 0, (struct sockaddr *)&serverStorage, addr_size);
+        }
 	}
 
     close(sock);
