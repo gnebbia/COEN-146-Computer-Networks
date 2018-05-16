@@ -48,7 +48,7 @@ int checksum (PACKET* pack) {
  *  main
  ***********/
 int main (int argc, char *argv[]) {
-	int sock, check, state;
+	int sock, state;
     PACKET send_pack, ack_pack;
 	struct sockaddr_in serverAddr;
 	socklen_t addr_size;
@@ -88,7 +88,6 @@ int main (int argc, char *argv[]) {
     do {  // send filename to server, repeat if wrong ack
 
 		// send filename
-        printf("sent check = %i\n", send_pack.header.check);
 		sendto (sock, &send_pack,  sizeof(PACKET), 0, (struct sockaddr *)&serverAddr, addr_size);
 
         // start timer
@@ -97,12 +96,9 @@ int main (int argc, char *argv[]) {
         tv.tv_sec = 2;
         tv.tv_usec = 0;
         rv = select (sock + 1, &readfds, NULL, NULL, &tv);
-        perror("past timere start");
         //  receive ack
         if (rv) {
             recvfrom (sock, &ack_pack, sizeof(PACKET), 0, NULL, NULL);
-            printf("ack seq = %i\n", ack_pack.header.sequence_ack);
-            printf("state = %i\n", state);
             if (ack_pack.header.sequence_ack == state){  // if ack, break
                 state = (state + 1) % 2;
                 break;
@@ -117,20 +113,15 @@ int main (int argc, char *argv[]) {
         send_pack.header.length = fread(send_pack.data, sizeof(char), 10, src);
         send_pack.header.sequence_ack = state;
         send_pack.header.check = checksum(&send_pack);
-        /*printf("ack sequence = %i\n", ack_pack.header.sequence_ack);
-        printf("data sequence = %i\n", send_pack.header.sequence_ack);
-        printf("Seinding: %s\n", send_pack.data); */
+
         while (1) {  // if ack, set up new pack
             sendto (sock, &send_pack,  sizeof(PACKET), 0, (struct sockaddr *)&serverAddr, addr_size);
             recvfrom (sock, &ack_pack, sizeof(PACKET), 0, NULL, NULL);
             if (ack_pack.header.sequence_ack == state)
                 break;
         }
-        // printf("Acked, next pack\n");
         state = (state + 1) % 2;
 
-        // printf("compare data sequence = %i\n", send_pack.header.sequence_ack);
-        // printf("new ack sequence = %i\n", ack_pack.header.sequence_ack);
     } while(!feof(src));
 
     // set packet for close
