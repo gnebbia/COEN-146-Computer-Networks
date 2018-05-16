@@ -34,6 +34,10 @@ int checksum (PACKET* pack) {
     return (int)sum;
 }
 
+int error () {
+    return rand()%100 > 80;
+}
+
 /********************
  * main
  ********************/
@@ -75,6 +79,10 @@ int main(int argc, char *argv[]) {
     // Accept and open file
     do {
         recvfrom(sock, &receive_pack, sizeof(PACKET), 0, (struct sockaddr *)&serverStorage, &addr_size);
+        if (error()) {
+            printf("OPEN FILE ACK DROP\n");
+            continue;
+        }
         check = receive_pack.header.check;
         if (check == checksum(&receive_pack) && receive_pack.header.sequence_ack == state) {
             dest = fopen(receive_pack.data, "wb");
@@ -93,20 +101,24 @@ int main(int argc, char *argv[]) {
 		// receive  datagrams
 	    recvfrom(sock, &receive_pack, sizeof(PACKET), 0, (struct sockaddr *)&serverStorage, &addr_size);
 
-        // if close pack, break
-        if (receive_pack.header.fin == 1)
-            break;
+        if (error()) {
+            printf("DATA ACK DROP\n");
+            continue;
+        }
 
 		// ack
         check = receive_pack.header.check;
-
         if (check == checksum(&receive_pack) &&
             receive_pack.header.sequence_ack == state) {
             ack_pack.header.sequence_ack = state;
             sendto(sock, &ack_pack, sizeof(PACKET), 0, (struct sockaddr *)&serverStorage, addr_size);
+            // if close pack, break
+            if (receive_pack.header.fin == 1)
+                break;
             state = (state + 1) % 2;
             fwrite(receive_pack.data, sizeof(char), receive_pack.header.length, dest);
         } else {
+            printf("BAD CHECKSUM OR SEQ\n");
             ack_pack.header.sequence_ack = (receive_pack.header.sequence_ack + 1) % 2;
             sendto(sock, &ack_pack, sizeof(PACKET), 0, (struct sockaddr *)&serverStorage, addr_size);
         }

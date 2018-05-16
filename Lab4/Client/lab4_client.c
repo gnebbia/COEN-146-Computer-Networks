@@ -3,9 +3,7 @@
     Lab 4
 */
 
-// add
-// - calc checksum
-// - start a timer
+// does the ack need checksum? does server need timer? skip a message?
 
 #include <stdio.h>
 #include <sys/socket.h>
@@ -18,6 +16,7 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <netinet/in.h>
+#include <stdlib.h>
 
 typedef struct {
     int sequence_ack;  // sequence number for data and for ACK
@@ -44,11 +43,15 @@ int checksum (PACKET* pack) {
     return (int)sum;
 }
 
+int error () {
+    return rand()%100 < 20;
+}
+
 /***********
  *  main
  ***********/
 int main (int argc, char *argv[]) {
-	int sock, state;
+	int sock, state, fin_count;
     PACKET send_pack, ack_pack;
 	struct sockaddr_in serverAddr;
 	socklen_t addr_size;
@@ -83,11 +86,15 @@ int main (int argc, char *argv[]) {
     send_pack.header.sequence_ack = state;
     send_pack.header.length = sizeof(send_pack.data);
     send_pack.header.fin = 0;
-    send_pack.header.check = checksum(&send_pack);
 
     do {  // send filename to server, repeat if wrong ack
+        send_pack.header.check = checksum(&send_pack);
 
-		// send filename
+        if (error()) {
+            printf("SENDING WRONG FILENAME CHECKSUM\n");
+            send_pack.header.check = 0;
+        }
+        // send filename
 		sendto (sock, &send_pack,  sizeof(PACKET), 0, (struct sockaddr *)&serverAddr, addr_size);
 
         // start timer
@@ -102,6 +109,8 @@ int main (int argc, char *argv[]) {
             if (ack_pack.header.sequence_ack == state){  // if ack, break
                 state = (state + 1) % 2;
                 break;
+            } else {
+                printf("PACKET DROP\n");
             }
         }
     } while (1);
@@ -112,13 +121,30 @@ int main (int argc, char *argv[]) {
 	do {
         send_pack.header.length = fread(send_pack.data, sizeof(char), 10, src);
         send_pack.header.sequence_ack = state;
-        send_pack.header.check = checksum(&send_pack);
 
         while (1) {  // if ack, set up new pack
+            send_pack.header.check = checksum(&send_pack);
+
+            if (error()) {
+                printf("SENDING WRONG DATA CHECKSUM\n");
+                send_pack.header.check = 0;
+            }
+
             sendto (sock, &send_pack,  sizeof(PACKET), 0, (struct sockaddr *)&serverAddr, addr_size);
-            recvfrom (sock, &ack_pack, sizeof(PACKET), 0, NULL, NULL);
-            if (ack_pack.header.sequence_ack == state)
-                break;
+
+            // start timer
+            FD_ZERO (&readfds);
+            FD_SET (sock, &readfds);
+            tv.tv_sec = 2;
+            tv.tv_usec = 0;
+            rv = select (sock + 1, &readfds, NULL, NULL, &tv);
+            if (rv) {
+                recvfrom (sock, &ack_pack, sizeof(PACKET), 0, NULL, NULL);
+                if (ack_pack.header.sequence_ack == state)
+                    break;
+            } else {
+                printf("PACKET DROP\n");
+            }
         }
         state = (state + 1) % 2;
 
@@ -128,17 +154,35 @@ int main (int argc, char *argv[]) {
     send_pack.header.length = 0;
     send_pack.header.sequence_ack = (send_pack.header.sequence_ack + 1) % 2;
     send_pack.header.fin = 1;
-    send_pack.header.check = checksum(&send_pack);
+    fin_count = 0;
 
     do {  // send close packet to server, repeat if wrong ack
-		sendto (sock, &send_pack,  sizeof(PACKET), 0, (struct sockaddr *)&serverAddr, addr_size);
+        send_pack.header.check = checksum(&send_pack);
 
-        // add timer
+        if (error()) {
+            printf("SENDING WRONG FIN CHECKSUM\n");
+            send_pack.header.check = 0;
+        }
+
+		sendto (sock, &send_pack,  sizeof(PACKET), 0, (struct sockaddr *)&serverAddr, addr_size);
+        ++fin_count;
+        if (fin_count == 3)
+            break;
+        // start timer
+        FD_ZERO (&readfds);
+        FD_SET (sock, &readfds);
+        tv.tv_sec = 2;
+        tv.tv_usec = 0;
+        rv = select (sock + 1, &readfds, NULL, NULL, &tv);
 
         //  receive ack
-        recvfrom (sock, &ack_pack, sizeof(PACKET), 0, NULL, NULL);
-        if (ack_pack.header.sequence_ack == state)  // if ack, break
-            break;
+        if (rv){
+            recvfrom (sock, &ack_pack, sizeof(PACKET), 0, NULL, NULL);
+            if (ack_pack.header.sequence_ack == state)  // if ack, break
+                break;
+        } else {
+            printf("PACKET DROP\n");
+        }
     } while (1);
 
     close(sock);
