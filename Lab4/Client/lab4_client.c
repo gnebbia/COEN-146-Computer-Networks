@@ -3,7 +3,6 @@
     Lab 4
 */
 
-// does the ack need checksum? does server need timer? skip a message?
 
 #include <stdio.h>
 #include <sys/socket.h>
