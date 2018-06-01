@@ -35,7 +35,7 @@ int out_data[3];  // host, host, weight
 MACHINE hosts[100];
 pthread_mutex_t lock;
 
-void parse_files(FILE* f_costs, FILE* f_hosts_);
+void parse_files(FILE* f_costs, FILE* f_hosts);
 void *receive_updates();
 void *link_state();
 void send_data();
@@ -54,9 +54,10 @@ int main(int argc, char* argv[]) {
     FILE *f_hosts;
     f_hosts = fopen(argv[4], "r");
 
-    pthread_mutex_intit(&lock, NULL);
+    pthread_mutex_init(&lock, NULL);
 
     parse_files(f_costs, f_hosts);
+    
     port = hosts[id].port;
 
     struct sockaddr_in local_addr, addr;
@@ -81,10 +82,10 @@ int main(int argc, char* argv[]) {
         printf("socket error\n");
         return -1;
     }
-
+    
     // thread start
     pthread_t receive_thr;
-    pthread_create(&receive_thr, NULL, receive_update, NULL);
+    pthread_create(&receive_thr, NULL, receive_updates, NULL);
 
     pthread_t link_thr;
     pthread_create(&link_thr, NULL, link_state, NULL);
@@ -97,21 +98,21 @@ int main(int argc, char* argv[]) {
 
 
 void parse_files (FILE* f_costs, FILE* f_hosts) { 
-    printf("parsing costs file:\n");
+    printf("costs file:\n");
     for (int i = 0; i < N; i++) {
         for (int j = 0; j < N; j++){
-            if (fscan(f_costs, "%d", &costs[i][j]) != 1)
+            if (fscanf(f_costs, "%d", &costs[i][j]) != 1)
                 break;
-            printf("d", costs[i][j]);
+            printf("%d", costs[i][j]);
         }
         printf("\n");
     }
 
-    printf("parsing hosts file:\n");
+    printf("hosts file:\n");
     for(int i = 0; i < N; i++) {
-        if (fscanf(f_hosts, "%s %s %d", &(hosts[i].name), &(hosts[i].ip), &(hosts[i].port)) < 1)
+        if (fscanf(f_hosts, "%s %s %d", (hosts[i].name), (hosts[i].ip), &(hosts[i].port)) < 1)
             break;
-        printf("%s %s %d \n", &(hosts[i].name), &(hosts[i].ip), &(hosts[i].port));
+        printf("%s %s %d \n", (hosts[i].name), (hosts[i].ip), (hosts[i].port));
     }
     return;
 }
@@ -119,7 +120,7 @@ void parse_files (FILE* f_costs, FILE* f_hosts) {
 
 void *receive_updates() {
     while (1) {
-        reveive_data(port);
+        receive_data(port);
 
         int host1 = ntohl(in_data[0]);
         int host2 = ntohl(in_data[1]);
@@ -152,8 +153,94 @@ void *link_state() {
             int tmp_costs[N][N];
             pthread_mutex_lock(&lock);
             for (int source = 0; source < N; source++) {
+                for (int i = 0; i< N; i++)
+                    dist[i] = INT_MAX, visited[i] = 0;
 
+                dist[source] = 0;
+
+                for (int count = 0; count < N - 1; count++) {
+                    int u = min_distance(dist, visited);
+                    visited[u] = 1;
+                    
+                    for (int v = 0; v < N; v++)
+                        if (visited[v] == 0 && costs[u][v] && dist[u] != INT_MAX && dist[u]+costs[u][v] < dist[v])
+                            dist[v] = dist[u] + costs[u][v];
+                }
+                
+                printf("distances computed from node %d: ", source);
+                for (int i = 0; i < N; i++) {
+                    printf("%d ", dist[i]);
+                    tmp_costs[source][i] = dist[i];
+                    tmp_costs[i][source] = dist[i];
+                }
+                printf("\n");
             }
+            pthread_mutex_unlock(&lock);
+            last_update = time(NULL);
         }
     }
 }
+
+
+int min_distance(int dist[], int visited[]) {
+    int min = INT_MAX, min_index;
+
+    for (int v = 0; v < N; v++)
+        if (visited[v] == 0 && dist[v] < min)
+            min = dist[v], min_index = v;
+
+    return min_index;
+}
+
+void send_data() {
+    int sock;
+    struct sockaddr_in destAddr[N];
+    socklen_t addr_size[N];
+
+    for (int i = 0; i < N; i++) {
+        destAddr[i].sin_family = AF_INET;
+        destAddr[i].sin_port = htons (hosts[i].port);
+        inet_pton (AF_INET, hosts[i].ip, &destAddr[i].sin_addr.s_addr);
+        memset (destAddr[i].sin_zero, '\0', sizeof (destAddr[i].sin_zero));
+        addr_size[i] = sizeof destAddr[i];
+    }
+
+    sock = socket (PF_INET, SOCK_DGRAM, 0);
+
+    for (int i = 0; i < N; i++)
+        if (i != id)
+            sendto (sock, &out_data, sizeof(out_data), 0, (struct sockaddr *)&(destAddr[i]), addr_size[i]);
+}
+
+
+int receive_data (int port) {
+    int nBytes = recvfrom (sock, &in_data, sizeof(in_data), 0, NULL, NULL);
+    printf("received update\n");
+    return 0;
+}
+
+
+void user_input_cost() {
+    int neighbor, new_cost;
+
+    printf("Update neighbor cost from node %d, format <neighbor> <new cost>\n", id);
+
+    scanf("%d %d", &neighbor, &new_cost);
+
+    pthread_mutex_lock(&lock);
+    costs[id][neighbor] = new_cost;
+    costs[neighbor][id] = new_cost;
+    out_data[0] = htonl(id);
+    out_data[1] = htonl(neighbor);
+    out_data[2] = htonl(new_cost);
+    send_data();
+
+    printf("new matrix after user input\n");
+    for (int i = 0; i < N; i++) {
+        for (int j = 0; j < N; j++)
+            printf("%d ", costs[i][j]);
+        printf("\n");
+    }
+    pthread_mutex_unlock(&lock);
+}
+
