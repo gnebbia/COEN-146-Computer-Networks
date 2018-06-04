@@ -39,6 +39,7 @@ void send_data();
 int receive_data(int port);
 void user_input_cost();
 
+
 int main(int argc, char* argv[]) {
 	if (argc != 5)
 		printf ("Usage: %s <id> <n_machines> <costs_file> <hosts_file> \n",argv[0]);
@@ -93,6 +94,7 @@ int main(int argc, char* argv[]) {
 	}
 }
 
+
 void parse_files(FILE* f_costs, FILE* f_hosts) {
 	
 	printf("Parsing costs file:\n");
@@ -114,6 +116,7 @@ void parse_files(FILE* f_costs, FILE* f_hosts) {
 	return;
 }
 
+
 void *receive_updates() {
 	
 	while(1) {
@@ -128,7 +131,7 @@ void *receive_updates() {
 		costs[host2][host1] = weight;
 
 		for (int i = 0; i < N; i++) {			
-			for (int j=0; j<N; j++) {
+			for (int j = 0; j < N; j++) {
 				printf("%d ", costs[i][j]);
 			}
 			printf("\n");
@@ -137,39 +140,32 @@ void *receive_updates() {
 	}
 }
 
+
 void *link_state() {
 	time_t last_update;
 	last_update = time(NULL);
 
 	while(1) {		
 		int threshold = rand()%(update_max_wait - update_min_wait) + update_min_wait;
-		if ((time(NULL) - last_update) > threshold) {
-			//
-			// dijkstra
-			//
+		if ((time(NULL) - last_update) > threshold) {  // use dijkstra to find best path
 			int dist[N];
 			int visited[N];
 			int tmp_costs[N][N];
 			pthread_mutex_lock(&lock);
-			for (int source = 0; source < N; source++) {
-				//initial values
+			for (int source = 0; source < N; source++) { //initialize values
 				for (int i = 0; i < N; i++)
 					dist[i] = INT_MAX, visited[i] = 0;
 
-				dist[source] = 0; // distance to self is 0
+				dist[source] = 0; // distance to self is always 0
 			
 				for (int count = 0; count < N-1; count++) {	
 					int u = minDistance(dist, visited);
 					visited[u] = 1;
 			
-					for (int v = 0; v < N; v++)
+					for (int v = 0; v < N; v++)  // assign costs
 						if (visited[v]==0 && costs[u][v] && dist[u] != INT_MAX && dist[u]+costs[u][v] < dist[v])
 		        			dist[v] = dist[u] + costs[u][v];
 				}
-
-				//
-				// copy changes into memory
-				//
 
 				printf("distances computed in dijkstra from node %d: ",source);
 				for (int i = 0; i < N; i++) {
@@ -186,8 +182,8 @@ void *link_state() {
 	}
 }
 
+
 int minDistance(int dist[], int visited[]) {
-   // Initialize min value
    int min = INT_MAX, min_index;
   
    for (int v = 0; v < N; v++)
@@ -197,13 +193,13 @@ int minDistance(int dist[], int visited[]) {
    return min_index;
 }
 
+
 void send_data() {
 	int sock;
 	struct sockaddr_in destAddr[N];
 	socklen_t addr_size[N];
 
-	// configure address
-	for (int i=0; i<N; i++) {
+	for (int i = 0; i < N; i++) {  // configure addresses
 		destAddr[i].sin_family = AF_INET;
 		destAddr[i].sin_port = htons (hosts[i].port);
 		inet_pton (AF_INET, hosts[i].ip, &destAddr[i].sin_addr.s_addr);
@@ -211,14 +207,14 @@ void send_data() {
 		addr_size[i] = sizeof destAddr[i];
 	}
 
-	/*Create UDP socket*/
-	sock = socket (PF_INET, SOCK_DGRAM, 0);
+	sock = socket (PF_INET, SOCK_DGRAM, 0);  // open socket
 	
 	for (int i = 0; i < N; i++) {
 		if (i != id)
 			sendto (sock, &out_data, sizeof(out_data), 0, (struct sockaddr *)&(destAddr[i]), addr_size[i]);
 	}
 }
+
 
 int receive_data(int port) {
 	
@@ -227,6 +223,7 @@ int receive_data(int port) {
 	
 	return 0;
 }
+
 
 void user_input_cost() {
 	int neighbor;
@@ -246,10 +243,8 @@ void user_input_cost() {
 
 
 	printf("new matrix after user input:\n");
-	for(int i=0; i<N; i++) {			
-		int j;
-		for(j=0; j<N; j++)
-		{
+	for (int i = 0; i < N; i++) {			
+		for (int j = 0; j < N; j++) {
 			printf("%d ", costs[i][j]);
 		}
 		printf("\n");
@@ -257,5 +252,3 @@ void user_input_cost() {
 	pthread_mutex_unlock(&lock);
 	
 }
-
-
