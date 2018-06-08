@@ -58,8 +58,8 @@ int main(int argc, char* argv[]) {
 	parse_files(f_costs, f_hosts);
 	port = hosts[id].port;
 
-	struct sockaddr_in local_addr
-	socklen_t addr_size
+	struct sockaddr_in local_addr;
+	socklen_t addr_size;
 	
 	// init 
 	local_addr.sin_family = AF_INET;
